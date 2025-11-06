@@ -1,10 +1,12 @@
 <h1>🎶 Bot de Música para Discord</h1>
 Este é um bot de música simples para o Discord, escrito em Python, que utiliza as bibliotecas discord.py e yt-dlp.
 
-Ele permite que os usuários solicitem músicas do YouTube (através de links ou termos de busca), gerenciem uma fila de reprodução, pausem, pulem e parem a música, tudo dentro de um canal de voz do Discord.
+Ele permite que os usuários solicitem músicas do YouTube (através de links de vídeo, links de playlist ou termos de busca), gerenciem uma fila de reprodução, pausem, pulem e parem a música, tudo dentro de um canal de voz do Discord.
 
 <h2>✨ Funcionalidades</h2>
-Tocar música: Adiciona uma música (via link ou busca no YouTube) à fila e começa a tocar.
+Tocar música: Adiciona uma música (via link ou busca) à fila e começa a tocar.
+
+Suporte a Playlists: Adiciona todos os vídeos de uma playlist do YouTube à fila de uma só vez.
 
 Pausar e Continuar: Controles básicos de reprodução.
 
@@ -33,7 +35,7 @@ Siga estes passos para configurar o bot no seu ambiente.
 1. Instale o FFmpeg (Passo Crítico!)
 Este bot não funcionará sem o FFmpeg. Ele é um software usado para processar o áudio antes de enviá-lo ao Discord.
 
-Windows:
+<strong>Windows:</strong>
 
 Baixe a última versão "essentials" em gyan.dev/ffmpeg/builds/.
 
@@ -43,7 +45,7 @@ Adicione a pasta bin (ex: C:\ffmpeg\bin) ao seu PATH (Variáveis de Ambiente) do
 
 Para verificar, abra um novo terminal e digite ffmpeg -version. Se informações da versão aparecerem, a instalação foi bem-sucedida.
 
-Linux (Debian/Ubuntu):
+<strong>Linux (Debian/Ubuntu):</strong>
 
 Bash
 
@@ -73,6 +75,7 @@ Instale as bibliotecas Python necessárias:
 Bash
 
 pip install discord.py yt-dlp PyNaCl
+
 3. Configure o Bot no Discord
 Vá até o Portal de Desenvolvedores do Discord.
 
@@ -123,7 +126,7 @@ Copie a URL gerada na parte inferior e cole-a no seu navegador. Escolha o servid
 <h2>🎵 Como Usar (Comandos)</h2>
 No seu servidor Discord, entre em um canal de voz e use os seguintes comandos:
 
-!play <nome da música ou link do YouTube>: Toca uma música ou a adiciona na fila.
+!play <nome da música, link de vídeo ou link de playlist>: Toca uma música, busca por um termo, ou adiciona todos os vídeos de uma playlist do YouTube à fila.
 
 !pause: Pausa a música atual.
 
