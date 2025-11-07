@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import yt_dlp
 import asyncio
+import os # <-- Adicionado para carregar o token de forma segura
 
 # 1. CONFIGURAÇÃO INICIAL
 # -----------------------------------------------------------------------------
@@ -18,9 +19,10 @@ FFMPEG_OPTIONS = {
 }
 
 # Configurações do yt-dlp (PARA MÚSICAS ÚNICAS E BUSCAS)
+# Usado para extrair o stream URL real no play_next
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
-    'noplaylist': True,  # <-- Importante: não carrega playlists por padrão
+    'noplaylist': True, 
     'extractaudio': True,
     'audioformat': 'mp3',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
@@ -35,8 +37,9 @@ YTDL_OPTIONS = {
 }
 
 # Configurações do yt-dlp (PARA PLAYLISTS)
+# Usado para pegar os METADADOS da playlist rapidamente
 YTDL_PLAYLIST_OPTIONS = YTDL_OPTIONS.copy()
-YTDL_PLAYLIST_OPTIONS['noplaylist'] = False # <-- Importante: permite carregar playlists
+YTDL_PLAYLIST_OPTIONS['noplaylist'] = False
 YTDL_PLAYLIST_OPTIONS['extract_flat'] = True # Pega os vídeos da playlist mais rápido
 
 
@@ -50,16 +53,37 @@ current_song = {}
 async def play_next(ctx):
     """
     Função auxiliar para tocar a próxima música na fila.
-    É chamada automaticamente quando uma música termina.
+    AGORA ELA EXTRAI O STREAM URL NA HORA DE TOCAR (Lazy Loading).
     """
     guild_id = ctx.guild.id
     if guild_id in queues and queues[guild_id]:
-        next_song = queues[guild_id].pop(0)
-        url = next_song['url']
-        title = next_song['title']
-        
-        # Cria a fonte de áudio e começa a tocar
-        source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
+        # 1. Pega os METADADOS da próxima música (título e link do youtube)
+        next_song_metadata = queues[guild_id].pop(0)
+        watch_url = next_song_metadata['watch_url']
+        title = next_song_metadata['title']
+
+        # 2. Extrai o STREAM URL real SÓ AGORA
+        stream_url = None
+        try:
+            # Usamos as opções de MÚSICA ÚNICA para extrair o áudio
+            with yt_dlp.YoutubeDL(YTDL_OPTIONS) as ydl: 
+                info = ydl.extract_info(watch_url, download=False)
+                stream_url = info['url']
+                title = info['title'] # Pega o título mais recente/correto
+        except Exception as e:
+            print(f"Erro ao extrair stream URL para {title}: {e}")
+            await ctx.send(f"❌ Erro ao tentar tocar: **{title}**. Pulando.")
+            # Tenta tocar a próxima da fila
+            asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
+            return
+
+        if not stream_url:
+            await ctx.send(f"❌ Não foi possível obter o link de áudio para: **{title}**. Pulando.")
+            asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
+            return
+
+        # 3. Cria a fonte de áudio e toca
+        source = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTIONS)
         ctx.voice_client.play(
             source, 
             after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
@@ -71,32 +95,31 @@ async def play_next(ctx):
         current_song[guild_id] = None
         await ctx.send("Fila terminada.")
 
-async def search_youtube(search_query):
+async def get_song_metadata(search_query):
     """
     Busca no YouTube (ou link direto) - APENAS MÚSICA ÚNICA.
-    Usa as YTDL_OPTIONS padrão (noplaylist=True).
+    Retorna METADADOS (link do youtube e título), NÃO O STREAM URL.
     """
     with yt_dlp.YoutubeDL(YTDL_OPTIONS) as ydl:
         try:
             info = ydl.extract_info(search_query, download=False)
             
-            # Se for uma busca (ex: "musica"), 'entries' conterá os resultados
             if 'entries' in info and info['entries']:
-                video = info['entries'][0]
-            # Se for um link direto de vídeo, 'entries' não existirá
+                video = info['entries'][0] # Pega o primeiro resultado da busca
             else:
-                video = info
+                video = info # É um link direto
+
+            # Retorna o link da PÁGINA (watch_url), não o stream URL
+            return {'watch_url': video['webpage_url'], 'title': video['title']}
 
         except Exception as e:
-            print(f"Erro ao buscar música única: {e}")
-            return None, None
-
-        return video['url'], video['title']
+            print(f"Erro ao buscar metadados da música: {e}")
+            return None
 
 async def extract_playlist_songs(playlist_url):
     """
-    Extrai todas as músicas de uma URL de playlist do YouTube.
-    Usa as YTDL_PLAYLIST_OPTIONS (noplaylist=False).
+    Extrai METADADOS de todas as músicas de uma URL de playlist.
+    NÃO extrai o stream url, apenas o link do youtube e título.
     """
     songs = []
     playlist_title = "Playlist Desconhecida"
@@ -109,14 +132,12 @@ async def extract_playlist_songs(playlist_url):
             if 'entries' in info:
                 for video in info['entries']:
                     if video:
-                        # Precisamos extrair a URL de áudio individual de cada
-                        # (Isso torna o carregamento da playlist mais lento, mas é mais seguro)
-                        try:
-                            video_info = ydl.extract_info(video['url'], download=False)
-                            songs.append({'url': video_info['url'], 'title': video_info['title']})
-                        except Exception as e:
-                            print(f"Erro ao extrair vídeo individual da playlist: {e}")
-                            
+                        # Adiciona o link do youtube (video['url']) e título
+                        songs.append({
+                            'watch_url': video['url'], 
+                            'title': video.get('title', 'Video Desconhecido')
+                        })
+                        
         except Exception as e:
             print(f"Erro ao carregar playlist: {e}")
             return [], playlist_title
@@ -139,6 +160,7 @@ async def on_ready():
 async def play(ctx, *, search: str):
     """
     Comando !play <nome da música, link do vídeo ou link da playlist>
+    Agora apenas adiciona METADADOS à fila.
     """
     # 1. Verificar canal de voz
     if not ctx.author.voice:
@@ -160,12 +182,11 @@ async def play(ctx, *, search: str):
         queues[guild_id] = []
 
     # 3. VERIFICAR SE É PLAYLIST OU MÚSICA ÚNICA
-    # Heurística simples: URLs de playlist do YouTube contêm 'list='
     is_playlist = "list=" in search and ("youtube.com/" in search or "youtu.be/" in search)
 
     if is_playlist:
         # É UMA PLAYLIST
-        await ctx.send(f"🔎 Carregando playlist... (Isso pode demorar um momento!)")
+        await ctx.send(f"🔎 Carregando metadados da playlist... (Rápido)")
         
         songs_list, playlist_title = await extract_playlist_songs(search)
         
@@ -173,7 +194,7 @@ async def play(ctx, *, search: str):
             await ctx.send("Desculpe, não consegui carregar essa playlist ou ela está vazia.")
             return
         
-        # Adiciona todas as músicas da lista na fila
+        # Adiciona os METADADOS na fila
         queues[guild_id].extend(songs_list)
         await ctx.send(f"✅ Adicionadas **{len(songs_list)}** músicas da playlist **'{playlist_title}'** à fila.")
 
@@ -181,15 +202,15 @@ async def play(ctx, *, search: str):
         # É MÚSICA ÚNICA (BUSCA OU LINK DIRETO)
         await ctx.send(f"🔎 Procurando por: **{search}**...")
         
-        url, title = await search_youtube(search)
+        song_metadata = await get_song_metadata(search)
         
-        if not url:
+        if not song_metadata:
             await ctx.send("Desculpe, não consegui encontrar essa música.")
             return
 
-        song = {'url': url, 'title': title}
-        queues[guild_id].append(song)
-        await ctx.send(f"✅ Adicionado à fila: **{title}**")
+        # Adiciona os METADADOS na fila
+        queues[guild_id].append(song_metadata)
+        await ctx.send(f"✅ Adicionado à fila: **{song_metadata['title']}**")
 
     # 4. COMEÇAR A TOCAR (se não estiver tocando)
     if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
@@ -278,4 +299,20 @@ async def nowplaying(ctx):
 
 # 5. INICIAR O BOT
 # -----------------------------------------------------------------------------
-bot.run("MTQzNTc5MTAyNzEwNDM4NzE3Mw.GnrN-q.ZGPeATahNeNBQEJEDd-AlTvKDGsMTGmr0AWYqE")
+
+# Lembrete: Crie um arquivo 'discloud.config' na raiz do seu projeto
+# e coloque 'FFMPEG=true' dentro dele.
+
+# É uma prática de segurança NUNCA colocar seu token diretamente no código.
+# Use as "Secrets" (Variáveis de Ambiente) do Discloud.
+# Vá no painel do seu bot no Discloud e adicione uma Secret chamada DISCORD_TOKEN
+# com o valor do seu token.
+try:
+    TOKEN = os.environ.get("DISCORD_TOKEN")
+    if TOKEN is None:
+        print("Erro: A variável de ambiente DISCORD_TOKEN não foi encontrada.")
+        print("Certifique-se de configurá-la nas 'Secrets' do Discloud.")
+    else:
+        bot.run(TOKEN)
+except Exception as e:
+    print(f"Erro ao iniciar o bot: {e}")
