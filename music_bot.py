@@ -278,4 +278,4 @@ async def nowplaying(ctx):
 
 # 5. INICIAR O BOT
 # -----------------------------------------------------------------------------
-bot.run("MTQzNTc5MTAyNzEwNDM4NzE3Mw.GmHIwc.sNzvAk1mehPpJ08jILER2z-LMH_CHwwWCov2_s")
+bot.run("DISCORD_TOKEN")
